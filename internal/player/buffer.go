@@ -107,9 +107,6 @@ func (b *Buffer) handleNewBytes(bs []byte) (needMore bool) {
 		go func() {
 			time.Sleep(b.topBufDelay)
 
-			b.lock.Lock()
-			defer b.lock.Unlock()
-
 			if b.d.Resume() {
 				b.l.Debug("Resuming download")
 			} else {

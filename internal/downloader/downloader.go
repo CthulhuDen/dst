@@ -16,12 +16,12 @@ import (
 
 // Consumer receives downloaded bytes and must return whether more data
 // is needed right now or not. Even when returning false it will not interrupt current download,
-// it is already meant to prevent starting downloading next chunk.
+// merely will not attempt to read download buffer until resume.
 //
 // The function MUST be very fast, so nothing async please, and minimum allocations.
 type Consumer = func([]byte) (needMore bool)
 
-type RemoteInfo struct {
+type remoteInfo struct {
 	rangesSupported bool
 	contentLength   int64
 }
@@ -35,7 +35,7 @@ type Downloader struct {
 	client     *http.Client
 	ctx        context.Context
 	req        *http.Request
-	remoteInfo *RemoteInfo
+	remoteInfo *remoteInfo
 
 	respBody       io.ReadCloser
 	buf            []byte
@@ -239,7 +239,7 @@ func (d *Downloader) getResponseBody() io.ReadCloser {
 		return nil
 	}
 
-	d.remoteInfo = &RemoteInfo{
+	d.remoteInfo = &remoteInfo{
 		rangesSupported: resp.Header.Get("Accept-Ranges") == "bytes",
 		contentLength:   resp.ContentLength,
 	}
