@@ -23,7 +23,7 @@ func generateRequestId() (string, error) {
 	return base64.URLEncoding.EncodeToString(b), nil
 }
 
-func RunServer(port int, b bitrate.Bitrate) error {
+func RunServer(port int, b bitrate.Bitrate, randomBytes int) error {
 	slog.Info(fmt.Sprintf("Listen for connection at :%d", port))
 
 	err := http.ListenAndServe(fmt.Sprintf(":%d", port), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -36,15 +36,28 @@ func RunServer(port int, b bitrate.Bitrate) error {
 			l.Error("Failed to generate random request ID: " + err.Error())
 		}
 
+		var in io.Reader
+		if randomBytes == 0 {
+			in = bufio.NewReaderSize(rand.Reader, 16<<10)
+		} else {
+			in, err = makeCycleRandomReader(randomBytes, 16<<10)
+			if err != nil {
+				l.Error("Failed to make random reader: " + err.Error())
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+		}
+
+		// Ignore actual offset requested, I mean we provide random bytes anyway
 		w.Header().Set("Accept-Ranges", "bytes")
 
 		var n int64
 		if b == 0 {
-			n, err = io.Copy(w, bufio.NewReader(rand.Reader))
+			n, err = io.Copy(w, in)
 		} else {
 			t := time.NewTicker(time.Second / 24)
 			stopC := make(chan struct{})
-			rndC, errC := runRndGen(int(b)/24, stopC, l)
+			rndC, errC := runGen(in, int(b)/24, stopC, l)
 			in := bytes.NewReader(nil)
 			flushAt := time.Now().Add(time.Second)
 		outer:
@@ -95,8 +108,51 @@ func RunServer(port int, b bitrate.Bitrate) error {
 	return nil
 }
 
-func runRndGen(bufSize int, stopC chan struct{}, l *slog.Logger) (chan []byte, chan error) {
-	r := bufio.NewReader(rand.Reader)
+type looper struct {
+	bs     []byte
+	offset int
+}
+
+func (l *looper) Read(p []byte) (n int, err error) {
+	for len(p) > 0 {
+		copyLen := len(p)
+		if copyLen+l.offset > len(l.bs) {
+			copyLen = len(l.bs) - l.offset
+		}
+
+		copy(p[:copyLen], l.bs[l.offset:])
+		l.offset += copyLen
+		l.offset %= len(l.bs)
+		p = p[copyLen:]
+
+		n += copyLen
+	}
+
+	return
+}
+
+func makeCycleRandomReader(randomBytes int, minBufSize int) (io.Reader, error) {
+	rnd := make([]byte, randomBytes)
+	if _, err := io.ReadFull(rand.Reader, rnd); err != nil {
+		return nil, err
+	}
+
+	bufSize := minBufSize
+	if rem := bufSize % randomBytes; rem != 0 {
+		bufSize += randomBytes - rem
+	}
+	bs := make([]byte, bufSize)
+	_, err := io.ReadFull(&looper{
+		bs: rnd,
+	}, bs)
+	if err != nil {
+		panic("Impossible error from looper.Read: " + err.Error())
+	}
+
+	return &looper{bs: bs}, nil
+}
+
+func runGen(r io.Reader, bufSize int, stopC chan struct{}, l *slog.Logger) (chan []byte, chan error) {
 	buf := make([]byte, bufSize)
 	bufBack := make([]byte, bufSize)
 

@@ -12,19 +12,19 @@ type Bitrate int
 func (b *Bitrate) UnmarshalText(text []byte) error {
 	var multiplier int
 	text = bytes.ToLower(text)
-	if bytes.HasSuffix(text, []byte("kb")) {
+	if bytes.HasSuffix(text, []byte("k")) {
 		multiplier = 1024
-	} else if bytes.HasSuffix(text, []byte("mb")) {
+	} else if bytes.HasSuffix(text, []byte("m")) {
 		multiplier = 1024 * 1024
-	} else if bytes.HasSuffix(text, []byte("gb")) {
+	} else if bytes.HasSuffix(text, []byte("g")) {
 		multiplier = 1024 * 1024 * 1024
 	} else {
-		return fmt.Errorf("bitrate must end with kb, mb or gb")
+		return fmt.Errorf("bitrate must end with k, m or g")
 	}
 
-	br, err := strconv.Atoi(string(text[:len(text)-2]))
+	br, err := strconv.Atoi(string(text[:len(text)-1]))
 	if err != nil {
-		return fmt.Errorf("bitrate must be integer with suffix kb, mb or gb")
+		return fmt.Errorf("bitrate must be integer with suffix k, m or g")
 	}
 
 	if br <= 0 {

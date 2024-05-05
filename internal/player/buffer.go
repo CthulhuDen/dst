@@ -1,6 +1,7 @@
 package player
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/url"
@@ -23,7 +24,7 @@ type Buffer struct {
 	nBytes int
 }
 
-func NewBuffer(url *url.URL, br bitrate.Bitrate, minBuf, maxBuf int, topBufDelay time.Duration, l *slog.Logger) *Buffer {
+func NewBuffer(url *url.URL, br bitrate.Bitrate, minBuf, maxBuf int, topBufDelay time.Duration, ctx context.Context, l *slog.Logger) *Buffer {
 	b := Buffer{
 		br:          br,
 		minBuff:     int(br) * minBuf,
@@ -33,7 +34,7 @@ func NewBuffer(url *url.URL, br bitrate.Bitrate, minBuf, maxBuf int, topBufDelay
 		lock:        &sync.Mutex{},
 		waitC:       make(chan struct{}),
 	}
-	b.d = downloader.StartNewDownloader(url, b.handleNewBytes, l)
+	b.d = downloader.StartNewDownloader(url, b.handleNewBytes, ctx, l)
 	l.Info("Starting filling buffer")
 	return &b
 }
@@ -53,7 +54,7 @@ func (b *Buffer) GetNextFrame(fps int) error {
 		case <-b.d.WaitC():
 			_, err := b.d.GetState()
 			if err != nil {
-				b.l.Error("Cant continue playing because download failed")
+				b.l.Error("Cant continue playing because download failed: " + err.Error())
 				return err
 			}
 			b.l.Info("Cant continue playing because end of file")

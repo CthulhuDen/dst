@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
+	"golang.org/x/sync/errgroup"
 
 	"dst/internal/bitrate"
 	"dst/internal/logger"
@@ -18,11 +20,12 @@ import (
 )
 
 type Tester struct {
-	URL               *url.URL        `arg:"" help:"URL to connect to"`
-	Bitrate           bitrate.Bitrate `required:"" short:"b" help:"Target video emulated bitrate. Must be int with suffix of kb or mb, meaning kilobits and megabits per second"`
-	BufferMin         int             `help:"Keep buffering and NOT start playing until reached" default:"1" placeholder:"SECONDS"`
-	BufferMax         int             `help:"Stop buffering when reached" default:"10" placeholder:"SECONDS"`
-	BufferToppedDelay int             `help:"When buffer is full, how long to wait before trying beginning to refill it again" default:"1" placeholder:"SECONDS"`
+	URL               *url.URL        `arg:"" env:"CONNECT_URL" help:"URL to connect to"`
+	Bitrate           bitrate.Bitrate `required:"" short:"b" env:"BITRATE" help:"Target video emulated bitrate. Must be int with suffix of k, m or g, meaning kilobits, megabits and gigabits per second"`
+	Threads           int             `short:"t" env:"NUM_THREADS" help:"Number of threads to use, each with a separate connection and consuming specified bitrate" default:"1"`
+	BufferMin         int             `env:"BUFFER_MIN" help:"Keep buffering and NOT start playing until reached" default:"1"`
+	BufferMax         int             `env:"BUFFER_MAX" help:"Stop buffering when reached" default:"10"`
+	BufferToppedDelay int             `env:"BUFFER_TOPPED_DELAY" help:"When buffer is full, how long to wait before trying beginning to refill it again" default:"1"`
 }
 
 func (t *Tester) Validate() error {
@@ -42,20 +45,39 @@ func (t *Tester) Validate() error {
 		return fmt.Errorf("buffer topped delay must be less than buffer max duration")
 	}
 
+	if t.Threads < 1 {
+		return fmt.Errorf("number of threads must be at least 1")
+	}
+
 	return nil
 }
 
 func (t *Tester) Run() error {
-	b := player.NewBuffer(t.URL, t.Bitrate, t.BufferMin, t.BufferMax, time.Duration(t.BufferToppedDelay)*time.Second,
-		slog.Default())
-	p := player.NewEmulator(b)
+	if t.Threads == 1 {
+		return t.run(slog.Default(), nil)
+	}
 
+	wg, ctx := errgroup.WithContext(context.Background())
+	for i := range t.Threads {
+		wg.Go(func() error {
+			return t.run(slog.Default().With(slog.Int("thread", i)), ctx)
+		})
+	}
+
+	return wg.Wait()
+}
+
+func (t *Tester) run(l *slog.Logger, ctx context.Context) error {
+	b := player.NewBuffer(t.URL, t.Bitrate, t.BufferMin, t.BufferMax,
+		time.Duration(t.BufferToppedDelay)*time.Second, ctx, l)
+	p := player.NewEmulator(b)
 	return p.Run()
 }
 
 type Server struct {
-	Port    *int            `arg:"" help:"Port to listen on"`
-	Bitrate bitrate.Bitrate `short:"b" help:"Maximum bitrate for response, if desired. Must have suffix of kb or mb"`
+	Port        *int            `arg:"" env:"PORT" help:"Port to listen on"`
+	Bitrate     bitrate.Bitrate `short:"b" env:"BITRATE" help:"Maximum bitrate for response, if desired. Must have suffix of k, m or g. By default bitrate is not artificially limited and depends only on your system CSPRNG and networking speed"`
+	RandomBytes int             `env:"RANDOM_BYTES" help:"If set, only this number of random bytes will be generated, and then just cycled to produce output. Can be used to remove throughput dependency on CSPRNG generator performance"`
 }
 
 func (s *Server) Validate() error {
@@ -71,11 +93,15 @@ func (s *Server) Validate() error {
 		return fmt.Errorf("port must be less than 65536")
 	}
 
+	if s.RandomBytes < 0 {
+		return fmt.Errorf("random bytes must be positive")
+	}
+
 	return nil
 }
 
 func (s *Server) Run() error {
-	return server.RunServer(*s.Port, s.Bitrate)
+	return server.RunServer(*s.Port, s.Bitrate, s.RandomBytes)
 }
 
 func main() {

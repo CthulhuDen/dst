@@ -51,8 +51,11 @@ type Downloader struct {
 // StartNewDownloader will create new downloader instance and return it.
 // It will initiate download process in the background, so consumer must be ready to handle
 // incoming data immediately.
-func StartNewDownloader(url *url.URL, consumer Consumer, logger *slog.Logger) *Downloader {
-	ctx := context.Background()
+func StartNewDownloader(url *url.URL, consumer Consumer, ctx context.Context, logger *slog.Logger) *Downloader {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	if logger == nil {
 		logger = slog.Default()
 	}
